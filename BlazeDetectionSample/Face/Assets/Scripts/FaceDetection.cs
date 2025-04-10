@@ -73,6 +73,7 @@ public class FaceDetection : MonoBehaviour
 
     async Awaitable Detect(Texture texture)
     {
+        //Texture setting
         m_TextureWidth = texture.width;
         m_TextureHeight = texture.height;
         imagePreview.SetTexture(texture);
@@ -86,8 +87,11 @@ public class FaceDetection : MonoBehaviour
 
         m_FaceDetectorWorker.Schedule(m_DetectorInput);
 
+        // Index Detect Faces
         var outputIndicesAwaitable = (m_FaceDetectorWorker.PeekOutput(0) as Tensor<int>).ReadbackAndCloneAsync();
+        // Scores Detect Faces
         var outputScoresAwaitable = (m_FaceDetectorWorker.PeekOutput(1) as Tensor<float>).ReadbackAndCloneAsync();
+        // Boxes Detect Faces
         var outputBoxesAwaitable = (m_FaceDetectorWorker.PeekOutput(2) as Tensor<float>).ReadbackAndCloneAsync();
 
         using var outputIndices = await outputIndicesAwaitable;
@@ -95,7 +99,7 @@ public class FaceDetection : MonoBehaviour
         using var outputBoxes = await outputBoxesAwaitable;
 
         var numFaces = outputIndices.shape.length;
-
+        
         for (var i = 0; i < facePreviews.Length; i++)
         {
             var active = i < numFaces;

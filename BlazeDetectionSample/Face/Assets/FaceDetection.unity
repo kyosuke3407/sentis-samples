@@ -42,7 +42,8 @@ RenderSettings:
 --- !u!157 &3
 LightmapSettings:
   m_ObjectHideFlags: 0
-  serializedVersion: 12
+  serializedVersion: 13
+  m_BakeOnSceneLoad: 0
   m_GISettings:
     serializedVersion: 2
     m_BounceScale: 1
@@ -395,7 +396,7 @@ MonoBehaviour:
   - {fileID: 1120148651}
   - {fileID: 194027925}
   imagePreview: {fileID: 540288955}
-  imageTexture: {fileID: 2800000, guid: 404c3b5aff737a340b2344dfe42a2d4b, type: 3}
+  imageTexture: {fileID: 2800000, guid: db2699a268d724887b87321f82f51b4d, type: 3}
   faceDetector: {fileID: 5022602860645237092, guid: df32e16c55d1f4868ae287f840b7f478, type: 3}
   anchorsCSV: {fileID: 4900000, guid: 3e88456b82cc63d4b9237f1dc38bad6d, type: 3}
   iouThreshold: 0.3
