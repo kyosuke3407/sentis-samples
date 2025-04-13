@@ -114,14 +114,16 @@ public class FaceDetection : MonoBehaviour
             var box_ImageSpace = BlazeUtils.mul(M, anchorPosition + new float2(outputBoxes[0, i, 0], outputBoxes[0, i, 1]));
             var boxTopRight_ImageSpace = BlazeUtils.mul(M, anchorPosition + new float2(outputBoxes[0, i, 0] + 0.5f * outputBoxes[0, i, 2], outputBoxes[0, i, 1] + 0.5f * outputBoxes[0, i, 3]));
 
+            Debug.Log(m_Anchors[idx, 0] + ", " + m_Anchors[idx, 1]);
+
             var boxSize = 2f * (boxTopRight_ImageSpace - box_ImageSpace);
             facePreviews[i].SetBoundingBox(true, ImageToWorld(box_ImageSpace), boxSize / texture.height);
 
-            for (var j = 0; j < k_NumKeypoints; j++)
-            {
-                var position_ImageSpace = BlazeUtils.mul(M, anchorPosition + new float2(outputBoxes[0, i, 4 + 2 * j + 0], outputBoxes[0, i, 4 + 2 * j + 1]));
-                facePreviews[i].SetKeypoint(j, true, ImageToWorld(position_ImageSpace));
-            }
+            //for (var j = 0; j < k_NumKeypoints; j++)
+            //{
+            //    var position_ImageSpace = BlazeUtils.mul(M, anchorPosition + new float2(outputBoxes[0, i, 4 + 2 * j + 0], outputBoxes[0, i, 4 + 2 * j + 1]));
+            //    facePreviews[i].SetKeypoint(j, true, ImageToWorld(position_ImageSpace));
+            //}
         }
 
         // if no faces are recognized then the awaitable outputs return synchronously so we need to add an extra frame await here to allow the main thread to run

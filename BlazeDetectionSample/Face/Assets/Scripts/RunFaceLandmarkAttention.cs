@@ -21,7 +21,7 @@ using Lays = Unity.Sentis.Layers;
  */
 
 
-public class RunFaceLandmark : MonoBehaviour
+public class RunFaceLandmarkAttention : MonoBehaviour
 {
     //Drag a link to a raw image here:
     public RawImage previewUI = null;
@@ -76,7 +76,7 @@ public class RunFaceLandmark : MonoBehaviour
 
     void SetupModel()
     {
-        model = ModelLoader.Load(Application.streamingAssetsPath + "/face_landmark.sentis");
+        model = ModelLoader.Load(Application.streamingAssetsPath + "/model_float32.sentis");
     }
     public void SetupEngine()
     {
@@ -196,22 +196,24 @@ public class RunFaceLandmark : MonoBehaviour
     {
         var transform = new TextureTransform();
         transform.SetDimensions(size, size, 3);
-        transform.SetTensorLayout(0, 3, 1, 2);
+        transform.SetTensorLayout(0, 1, 2, 3);
         using var image = TextureConverter.ToTensor(source, transform);
 
         // The image has pixels in the range [0..1]
 
         worker.Schedule(image);
 
-        using var landmarks = worker.PeekOutput("conv2d_21").ReadbackAndClone() as Tensor<float>;
+        //using var landmarks = worker.PeekOutput("output_mesh_identity").ReadbackAndClone() as Tensor<float>;
+        using var landmarks = worker.PeekOutput("output_right_iris").ReadbackAndClone() as Tensor<float>;
 
-        //for (int n = 0; n < landmarks.shape[3]; n++)
-        //{
-        //    float px = landmarks[0, 0, 0, n * 3 + 0];
-        //    float py = landmarks[0, 0, 0, n * 3 + 1];
-        //    float pz = landmarks[0, 0, 0, n * 3 + 2];
-        //    Debug.Log($"Landmark {n}: ({px}, {py}, {pz})");
-        //}
+        for (int n = 0; n < landmarks.shape[3]; n++)
+        {
+            float px = landmarks[0, 0, 0, n * 2 + 0];
+            float py = landmarks[0, 0, 0, n * 2 + 1];
+            Debug.Log($"Landmark {n}: ({px}, {py})");
+        }
+
+
         //This gives the confidence:
         //using var confidence = worker.PeekOutput("conv2d_31").ReadbackAndClone() as TensorFloat;
 
@@ -220,20 +222,19 @@ public class RunFaceLandmark : MonoBehaviour
 
         DrawLandmarks(landmarks, scaleX, scaleY);
     }
+    
 
     void DrawLandmarks(Tensor<float> landmarks, float scaleX, float scaleY)
     {
-        int numLandmarks = landmarks.shape[3] / 3; //468 face landmarks
+        int numLandmarks = landmarks.shape[3] / 2; //468 face landmarks
 
         RenderTexture.active = targetTexture;
         canvasTexture.ReadPixels(new Rect(0, 0, targetTexture.width, targetTexture.height), 0, 0);
 
         for (int n = 0; n < numLandmarks; n++)
         {
-            int px = (int)(landmarks[0, 0, 0, n * 3 + 0] * scaleX) - (markerWidth - 1) / 2;
-            Debug.Log(landmarks[0, 0, 0, n * 3 + 0] + "," + scaleX + ", " + markerWidth);
-            int py = (int)(landmarks[0, 0, 0, n * 3 + 1] * scaleY) - (markerWidth - 1) / 2;
-            int pz = (int)(landmarks[0, 0, 0, n * 3 + 2] * scaleX);
+            int px = (int)(landmarks[0, 0, 0, n * 2 + 0] * scaleX) - (markerWidth - 1) / 2;
+            int py = (int)(landmarks[0, 0, 0, n * 2 + 1] * scaleY) - (markerWidth - 1) / 2;
             int destX = Mathf.Clamp(px, 0, targetTexture.width - 1 - markerWidth);
             int destY = Mathf.Clamp(targetTexture.height - 1 - py, 0, targetTexture.height - 1 - markerWidth);
             canvasTexture.SetPixels32(destX, destY, markerWidth, markerWidth, markerPixels);
