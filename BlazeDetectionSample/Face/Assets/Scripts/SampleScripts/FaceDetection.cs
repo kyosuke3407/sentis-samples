@@ -85,6 +85,8 @@ public class FaceDetection : MonoBehaviour
         var M = BlazeUtils.mul(BlazeUtils.TranslationMatrix(0.5f * (new Vector2(texture.width, texture.height) + new Vector2(-size, size))), BlazeUtils.ScaleMatrix(new Vector2(scale, -scale)));
         BlazeUtils.SampleImageAffine(texture, m_DetectorInput, M);
 
+        Debug.Log(M);
+
         m_FaceDetectorWorker.Schedule(m_DetectorInput);
 
         // Index Detect Faces
@@ -114,7 +116,10 @@ public class FaceDetection : MonoBehaviour
             var box_ImageSpace = BlazeUtils.mul(M, anchorPosition + new float2(outputBoxes[0, i, 0], outputBoxes[0, i, 1]));
             var boxTopRight_ImageSpace = BlazeUtils.mul(M, anchorPosition + new float2(outputBoxes[0, i, 0] + 0.5f * outputBoxes[0, i, 2], outputBoxes[0, i, 1] + 0.5f * outputBoxes[0, i, 3]));
 
-            Debug.Log(m_Anchors[idx, 0] + ", " + m_Anchors[idx, 1]);
+            Debug.Log(anchorPosition[0] + ", " + anchorPosition[1]);
+            Debug.Log(outputBoxes[0, i, 0] + ", " + outputBoxes[0, i, 1] + ", " + outputBoxes[0, i, 2] + ", " + outputBoxes[0, i, 3]);
+            Debug.Log(box_ImageSpace);
+            Debug.Log(boxTopRight_ImageSpace);
 
             var boxSize = 2f * (boxTopRight_ImageSpace - box_ImageSpace);
             facePreviews[i].SetBoundingBox(true, ImageToWorld(box_ImageSpace), boxSize / texture.height);
