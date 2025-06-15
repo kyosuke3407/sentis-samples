@@ -1,10 +1,10 @@
-Shader "Unlit/BoundBox"
+﻿Shader "Unlit/BoundBox"
 {
     Properties
     {
         _MainTex("Texture", 2D) = "white"{}
         _Color("Box Color", Color) = (1, 0, 0, 1)
-        _Box("Bounding Box (x, y, w, h)", Vector) = (0.2, 0.2, 0.4, 0.3)
+        _Box("Bounding Box (x, y, w, h)", Vector) = (0.2, 0.8, 0.4, 0.3)
         _LineWidth("Line Width", Float) = 0.005
     }
     SubShader
@@ -48,8 +48,11 @@ Shader "Unlit/BoundBox"
             fixed4 frag(v2f i) : SV_Target
             {
                 float2 uv = i.uv;
-                float2 boxMin = _Box.xy / 128;
-                float2 boxMax = (_Box.xy + _Box.zw) / 128;
+                float2 topLeft = _Box.xy / 128;
+                float2 size = _Box.zw / 128;
+                float2 bottomLeft = float2(topLeft.x, topLeft.y - size.y);
+                float2 boxMin = bottomLeft;
+                float2 boxMax = topLeft + float2(size.x, 0);
 
                 float lw = _LineWidth;
 
