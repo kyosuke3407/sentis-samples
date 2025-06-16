@@ -2,8 +2,6 @@ using UnityEngine;
 using Unity.Sentis;
 using UnityEngine.Video;
 using UnityEngine.UI;
-using System.Collections.Generic;
-using Lays = Unity.Sentis.Layers;
 
 /*
  *                   Face Landmarks Inference

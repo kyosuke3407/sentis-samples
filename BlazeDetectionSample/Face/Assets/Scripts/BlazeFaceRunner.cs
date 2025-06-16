@@ -7,11 +7,13 @@ using UnityEngine.UI;
 
 public class BlazeFaceRunner : MonoBehaviour
 {
-    [SerializeField] private ModelAsset BlazeFaceAsset;
-    private Model BlazeFaceModel;
-    private Worker worker;
-    private Tensor<float> inputTensor, outputTensor;
-    private TextureTransform transform;
+    [SerializeField] private ModelAsset BlazeFaceAsset, AttentionMeshAsset;
+    private Model BlazeFaceModel, AttentionMeshModel;
+    private Worker BlazeFaceWorker, AttentionMeshWorker;
+    private Tensor<float> inputTensor;
+    private Tensor<float> attentionMeshInputTensor;
+    private TextureTransform transformBF, transformAM;
+
     [SerializeField] private TextAsset anchorCSV;
     const int k_NumAnchors = 896;
     float[,] m_Anchors;
@@ -20,8 +22,11 @@ public class BlazeFaceRunner : MonoBehaviour
     public float scoreThreshold = 0.5f;
 
     [SerializeField] private Texture2D tex;
-    [SerializeField] private RawImage rawImage;
+    [SerializeField] private RawImage rawImage, IrisImage;
     [SerializeField] private Material material;
+    RenderTexture croppedRT;
+    [SerializeField] private Material irisMaterial;
+
 
     public static float[,] LoadAnchors(string csv, int k)
     {
@@ -76,85 +81,81 @@ public class BlazeFaceRunner : MonoBehaviour
 
         var input = graph.AddInput(BlazeFaceModel, 0);
         var outputs = Functional.Forward(BlazeFaceModel, 2 * input - 1);
-
         var boxes = outputs[0];
         var scores = outputs[1];
         var ancohorData = new float[k_NumAnchors * 4];
-
-        // Copy m_Anchors to anchorData high speed
         Buffer.BlockCopy(m_Anchors, 0, ancohorData, 0, ancohorData.Length * sizeof(float));
         var anchors = Functional.Constant(new TensorShape(k_NumAnchors, 4), ancohorData);
         var idxScoreBox = NWSF(boxes, scores, anchors, iouThreshold, scoreThreshold);
+        var BlazeFace = graph.Compile(idxScoreBox.Item1, idxScoreBox.Item2, idxScoreBox.Item3);
 
-        var AttentionMeshModel = graph.Compile(idxScoreBox.Item1, idxScoreBox.Item2, idxScoreBox.Item3);
-
-
-        worker = new Worker(AttentionMeshModel, BackendType.GPUCompute);
+        BlazeFaceWorker = new Worker(BlazeFace, BackendType.GPUCompute);
         inputTensor = new Tensor<float>(new TensorShape(1, 128, 128, 3));
-        transform = new TextureTransform()
+        transformBF = new TextureTransform()
             .SetDimensions(128, 128, 3)
             .SetTensorLayout(TensorLayout.NHWC);
 
 
-        TextureConverter.ToTensor(tex, inputTensor, transform);
-        worker.SetInput(0, inputTensor);
-
-        worker.Schedule();
-
-        var indexFace = worker.PeekOutput(0) as Tensor<int>;
-        var score = worker.PeekOutput(1) as Tensor<float>;
-        var Box = worker.PeekOutput(2) as Tensor<float>;
-
-        var cpuIndex = indexFace.ReadbackAndClone();
-        var cpuScore = score.ReadbackAndClone();
-        var cpuBox = Box.ReadbackAndClone();
-
-        Debug.Log(cpuIndex[0]);
-        Debug.Log(cpuScore);
-        Debug.Log(cpuBox[0, 0, 0] + ", " + cpuBox[0, 0, 1] + ", " + cpuBox[0, 0, 2] + ", " + cpuBox[0, 0, 3]);
-
-        var anchorPosition = 128 * new float2(m_Anchors[cpuIndex[0], 0], m_Anchors[cpuIndex[0], 1]);
-        var boxSpace = anchorPosition + new float2(cpuBox[0, 0, 0], cpuBox[0, 0, 1]);
-        var boxTopRightSpace = anchorPosition + new float2(cpuBox[0, 0, 0] + 0.5f * cpuBox[0, 0, 2], cpuBox[0, 0, 1] + 0.5f * cpuBox[0, 0, 3]);
-
-        Debug.Log("anchorPosition: " + anchorPosition);
-        Debug.Log("boxSpaceUnderLeft: " + boxSpace);
-        Debug.Log("boxSpaceTopRight: " + boxTopRightSpace);
-
-        var x = boxSpace.x - cpuBox[0, 0, 2] * 0.5f;
-        var y = Mathf.Abs((boxSpace.y - cpuBox[0, 0, 3] * 0.5f) - 128);
-
-        Debug.Log("boxSpaceUnderLeft: " + x + ", " + y + ", " + cpuBox[0, 0, 2] + ", " + cpuBox[0, 0, 3]);
-
-        rawImage.texture = tex;
-        Vector4 box = new Vector4(x, y, cpuBox[0, 0, 2], cpuBox[0, 0, 3]);
-        material.SetVector("_Box", box);
+        croppedRT = new RenderTexture(192, 192, 0, RenderTextureFormat.ARGB32);
+        croppedRT.filterMode = FilterMode.Bilinear;
+        croppedRT.Create();
 
 
-        //Debug.Log("anchors: " + 128 * m_Anchors[cpuIndex[0], 0] + ", " + 128 * m_Anchors[cpuIndex[0], 1]);
-        //Debug.Log("boxSpace: " + cpuBox[0, 0, 0] + ", " + cpuBox[0, 0, 1] + ", " + cpuBox[0, 0, 3] + ", " + cpuBox[0, 0, 4]);
+        AttentionMeshModel = ModelLoader.Load(AttentionMeshAsset);
+        var AttentionMeshGraph = new FunctionalGraph();
+        var inputAM = AttentionMeshGraph.AddInput(AttentionMeshModel, 0);
+        var outputsAM = Functional.Forward(AttentionMeshModel, inputAM);
+        var AttentionMesh = AttentionMeshGraph.Compile(outputsAM);
+
+        AttentionMeshWorker = new Worker(AttentionMesh, BackendType.GPUCompute);
+        attentionMeshInputTensor = new Tensor<float>(new TensorShape(1, 3, 192, 192));
+        transformAM = new TextureTransform()
+            .SetDimensions(192, 192, 3)
+            .SetTensorLayout(TensorLayout.NCHW);
     }
 
 
     void Update()
     {
-        //TextureConverter.ToTensor(tex, inputTensor,transform);
-        //worker.SetInput(0, inputTensor);
+        rawImage.texture = tex;
+        TextureConverter.ToTensor(tex, inputTensor, transformBF);
+        BlazeFaceWorker.SetInput(0, inputTensor);
 
-        //worker.Schedule();
+        BlazeFaceWorker.Schedule();
 
-        //var indexFace = worker.PeekOutput(0) as Tensor<int>;
-        //var score = worker.PeekOutput(1) as Tensor<float>;
-        //var Box = worker.PeekOutput(2) as Tensor<float>;
+        var indexFace = BlazeFaceWorker.PeekOutput(0) as Tensor<int>;
+        var score = BlazeFaceWorker.PeekOutput(1) as Tensor<float>;
+        var Box = BlazeFaceWorker.PeekOutput(2) as Tensor<float>;
 
-        //var cpuIndex = indexFace.ReadbackAndClone();
-        //var cpuScore = score.ReadbackAndClone();
-        //var cpuBox = Box.ReadbackAndClone();
+        var cpuIndex = indexFace.ReadbackAndClone();
+        var cpuScore = score.ReadbackAndClone();
+        var cpuBox = Box.ReadbackAndClone();
+        var anchorPosition = 128 * new float2(m_Anchors[cpuIndex[0], 0], m_Anchors[cpuIndex[0], 1]);
+        var boxSpace = anchorPosition + new float2(cpuBox[0, 0, 0], cpuBox[0, 0, 1]);
+        var boxTopRightSpace = anchorPosition + new float2(cpuBox[0, 0, 0] + 0.5f * cpuBox[0, 0, 2], cpuBox[0, 0, 1] + 0.5f * cpuBox[0, 0, 3]);
 
-        //Debug.Log(cpuScore);
-        //Debug.Log(cpuBox);
-        //Debug.Log(cpuIndex);
+        var x = boxSpace.x - cpuBox[0, 0, 2] * 0.5f;
+        var y = Mathf.Abs((boxSpace.y - cpuBox[0, 0, 3] * 0.5f) - 128);
 
+        Vector4 box = new Vector4(x, y, cpuBox[0, 0, 2], cpuBox[0, 0, 3]);
+        material.SetVector("_Box", box);
+        material.SetTexture("_MainTex", tex);
 
+        Graphics.Blit(tex, croppedRT, material);
+        TextureConverter.ToTensor(croppedRT, attentionMeshInputTensor, transformAM);
+        AttentionMeshWorker.SetInput(0, attentionMeshInputTensor);
+        AttentionMeshWorker.Schedule();
+
+        var LeftIris = AttentionMeshWorker.PeekOutput(2) as Tensor<float>;
+        var RightIris = AttentionMeshWorker.PeekOutput(6) as Tensor<float>;
+
+        var cpuLeftIris = LeftIris.ReadbackAndClone();
+        var cpuRightIris = RightIris.ReadbackAndClone();
+        irisMaterial.SetTexture("_MainTex", croppedRT);
+        irisMaterial.SetFloat("_LeftIrisX", cpuLeftIris[0, 0, 0, 0]);
+        irisMaterial.SetFloat("_LeftIrisY", cpuLeftIris[0, 0, 0, 1]);
+        irisMaterial.SetFloat("_RightIrisX", cpuRightIris[0, 0, 0, 0]);
+        irisMaterial.SetFloat("_RightIrisY", cpuRightIris[0, 0, 0, 1]);
+        IrisImage.texture = croppedRT;
     }
 }
