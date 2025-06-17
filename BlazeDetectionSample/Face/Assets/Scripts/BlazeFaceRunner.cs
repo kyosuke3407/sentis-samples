@@ -21,33 +21,114 @@ public class BlazeFaceRunner : MonoBehaviour
     public float iouThreshold = 0.3f;
     public float scoreThreshold = 0.5f;
 
-    [SerializeField] private Texture2D tex;
     [SerializeField] private RawImage rawImage, IrisImage;
     [SerializeField] private Material material;
     RenderTexture croppedRT;
     [SerializeField] private Material irisMaterial;
 
+    private WebCamTexture webcamTex;
+    private Texture2D inputTex;
 
-    public static float[,] LoadAnchors(string csv, int k)
+    FunctionalGraph blazeGraph, attentionGraph;
+
+    void Start()
     {
-        var anchors = new float[k, 4];
-        var anchorLines = csv.Split('\n');
-
-        for (int i = 0; i < k; i++)
+        var devices = WebCamTexture.devices;
+        int deviceIndex = 1; 
+        
+        for (int i = 0; i < devices.Length; i++)
         {
-            var anchorValues = anchorLines[i].Split(',');
-            for (var j = 0; j < 4; j++)
-            {
-                anchors[i, j] = float.Parse(anchorValues[j], CultureInfo.InvariantCulture);
-            }
+            var device = devices[i];
+            Debug.Log($"[{i}] Name: {device.name}, " +
+                      $"FrontFacing: {device.isFrontFacing}, " +
+                      $"Kind: {device.kind}, " +
+                      $"AvailableResolutions: {(device.availableResolutions != null ? device.availableResolutions.Length.ToString() : "N/A")}");
         }
-        return anchors;
+
+        string deviceName = devices[deviceIndex].name;
+        webcamTex = new WebCamTexture(deviceName, 640, 480);
+        webcamTex.Play();
+
+        inputTex = new Texture2D(128, 128, TextureFormat.RGB24, false);
+
+        m_Anchors = LoadAnchors(anchorCSV.text, k_NumAnchors);
+
+        BlazeFaceModel = ModelLoader.Load(BlazeFaceAsset);
+        blazeGraph = new FunctionalGraph();
+        var input = blazeGraph.AddInput(BlazeFaceModel, 0);
+        var outputs = Functional.Forward(BlazeFaceModel, 2 * input - 1);
+        var boxes = outputs[0];
+        var scores = outputs[1];
+        var anchorData = new float[k_NumAnchors * 4];
+        Buffer.BlockCopy(m_Anchors, 0, anchorData, 0, anchorData.Length * sizeof(float));
+        var anchors = Functional.Constant(new TensorShape(k_NumAnchors, 4), anchorData);
+        var idxScoreBox = NWSF(boxes, scores, anchors, iouThreshold, scoreThreshold);
+        var blazeCompiled = blazeGraph.Compile(idxScoreBox.Item1, idxScoreBox.Item2, idxScoreBox.Item3);
+        BlazeFaceWorker = new Worker(blazeCompiled, BackendType.GPUCompute);
+
+        inputTensor = new Tensor<float>(new TensorShape(1, 128, 128, 3));
+        transformBF = new TextureTransform().SetDimensions(128, 128, 3).SetTensorLayout(TensorLayout.NHWC);
+
+        croppedRT = new RenderTexture(192, 192, 0, RenderTextureFormat.ARGB32);
+        croppedRT.filterMode = FilterMode.Bilinear;
+        croppedRT.Create();
+
+        AttentionMeshModel = ModelLoader.Load(AttentionMeshAsset);
+        attentionGraph = new FunctionalGraph();
+        var inputAM = attentionGraph.AddInput(AttentionMeshModel, 0);
+        var outputsAM = Functional.Forward(AttentionMeshModel, inputAM);
+        var attentionCompiled = attentionGraph.Compile(outputsAM);
+        AttentionMeshWorker = new Worker(attentionCompiled, BackendType.GPUCompute);
+
+        attentionMeshInputTensor = new Tensor<float>(new TensorShape(1, 3, 192, 192));
+        transformAM = new TextureTransform().SetDimensions(192, 192, 3).SetTensorLayout(TensorLayout.NCHW);
     }
 
-    //Non-Maximum Suppression 
+    void Update()
+    {
+        rawImage.texture = webcamTex;
+
+        TextureConverter.ToTensor(webcamTex, inputTensor, transformBF);
+        BlazeFaceWorker.SetInput(0, inputTensor);
+        BlazeFaceWorker.Schedule();
+
+        var indexFace = BlazeFaceWorker.PeekOutput(0) as Tensor<int>;
+        var score = BlazeFaceWorker.PeekOutput(1) as Tensor<float>;
+        var Box = BlazeFaceWorker.PeekOutput(2) as Tensor<float>;
+
+        var cpuIndex = indexFace.ReadbackAndClone();
+        var cpuBox = Box.ReadbackAndClone();
+
+        var anchorPosition = 128 * new float2(m_Anchors[cpuIndex[0], 0], m_Anchors[cpuIndex[0], 1]);
+        var boxSpace = anchorPosition + new float2(cpuBox[0, 0, 0], cpuBox[0, 0, 1]);
+        var x = boxSpace.x - cpuBox[0, 0, 2] * 0.5f;
+        var y = Mathf.Abs((boxSpace.y - cpuBox[0, 0, 3] * 0.5f) - 128);
+
+        Vector4 box = new Vector4(x, y, cpuBox[0, 0, 2], cpuBox[0, 0, 3]);
+        material.SetVector("_Box", box);
+        material.SetTexture("_MainTex", webcamTex);
+        Graphics.Blit(webcamTex, croppedRT, material);
+
+        TextureConverter.ToTensor(croppedRT, attentionMeshInputTensor, transformAM);
+        AttentionMeshWorker.SetInput(0, attentionMeshInputTensor);
+        AttentionMeshWorker.Schedule();
+
+        var LeftIris = AttentionMeshWorker.PeekOutput(2) as Tensor<float>;
+        var RightIris = AttentionMeshWorker.PeekOutput(6) as Tensor<float>;
+        var cpuLeftIris = LeftIris.ReadbackAndClone();
+        var cpuRightIris = RightIris.ReadbackAndClone();
+
+        irisMaterial.SetTexture("_MainTex", croppedRT);
+        irisMaterial.SetFloat("_LeftIrisX", cpuLeftIris[0, 0, 0, 0]);
+        irisMaterial.SetFloat("_LeftIrisY", cpuLeftIris[0, 0, 0, 1]);
+        irisMaterial.SetFloat("_RightIrisX", cpuRightIris[0, 0, 0, 0]);
+        irisMaterial.SetFloat("_RightIrisY", cpuRightIris[0, 0, 0, 1]);
+
+        IrisImage.texture = croppedRT;
+    }
+
     public static (FunctionalTensor, FunctionalTensor, FunctionalTensor) NWSF(FunctionalTensor rawBoxes, FunctionalTensor rawScores, FunctionalTensor anchors, float iouTreshold, float scoreThreshold)
     {
-        //uv
         var xCenter = rawBoxes[0, .., 0] + anchors[.., 0] * 128;
         var yCenter = rawBoxes[0, .., 1] + anchors[.., 1] * 128;
 
@@ -72,90 +153,17 @@ public class BlazeFaceRunner : MonoBehaviour
         return (selectedIndies, selectedScores, selectedBoxes);
     }
 
-    void Start()
+    public static float[,] LoadAnchors(string csv, int k)
     {
-        m_Anchors = LoadAnchors(anchorCSV.text, k_NumAnchors);
+        var anchors = new float[k, 4];
+        var anchorLines = csv.Split('\n');
 
-        BlazeFaceModel = ModelLoader.Load(BlazeFaceAsset);
-        var graph = new FunctionalGraph();
-
-        var input = graph.AddInput(BlazeFaceModel, 0);
-        var outputs = Functional.Forward(BlazeFaceModel, 2 * input - 1);
-        var boxes = outputs[0];
-        var scores = outputs[1];
-        var ancohorData = new float[k_NumAnchors * 4];
-        Buffer.BlockCopy(m_Anchors, 0, ancohorData, 0, ancohorData.Length * sizeof(float));
-        var anchors = Functional.Constant(new TensorShape(k_NumAnchors, 4), ancohorData);
-        var idxScoreBox = NWSF(boxes, scores, anchors, iouThreshold, scoreThreshold);
-        var BlazeFace = graph.Compile(idxScoreBox.Item1, idxScoreBox.Item2, idxScoreBox.Item3);
-
-        BlazeFaceWorker = new Worker(BlazeFace, BackendType.GPUCompute);
-        inputTensor = new Tensor<float>(new TensorShape(1, 128, 128, 3));
-        transformBF = new TextureTransform()
-            .SetDimensions(128, 128, 3)
-            .SetTensorLayout(TensorLayout.NHWC);
-
-
-        croppedRT = new RenderTexture(192, 192, 0, RenderTextureFormat.ARGB32);
-        croppedRT.filterMode = FilterMode.Bilinear;
-        croppedRT.Create();
-
-
-        AttentionMeshModel = ModelLoader.Load(AttentionMeshAsset);
-        var AttentionMeshGraph = new FunctionalGraph();
-        var inputAM = AttentionMeshGraph.AddInput(AttentionMeshModel, 0);
-        var outputsAM = Functional.Forward(AttentionMeshModel, inputAM);
-        var AttentionMesh = AttentionMeshGraph.Compile(outputsAM);
-
-        AttentionMeshWorker = new Worker(AttentionMesh, BackendType.GPUCompute);
-        attentionMeshInputTensor = new Tensor<float>(new TensorShape(1, 3, 192, 192));
-        transformAM = new TextureTransform()
-            .SetDimensions(192, 192, 3)
-            .SetTensorLayout(TensorLayout.NCHW);
-    }
-
-
-    void Update()
-    {
-        rawImage.texture = tex;
-        TextureConverter.ToTensor(tex, inputTensor, transformBF);
-        BlazeFaceWorker.SetInput(0, inputTensor);
-
-        BlazeFaceWorker.Schedule();
-
-        var indexFace = BlazeFaceWorker.PeekOutput(0) as Tensor<int>;
-        var score = BlazeFaceWorker.PeekOutput(1) as Tensor<float>;
-        var Box = BlazeFaceWorker.PeekOutput(2) as Tensor<float>;
-
-        var cpuIndex = indexFace.ReadbackAndClone();
-        var cpuScore = score.ReadbackAndClone();
-        var cpuBox = Box.ReadbackAndClone();
-        var anchorPosition = 128 * new float2(m_Anchors[cpuIndex[0], 0], m_Anchors[cpuIndex[0], 1]);
-        var boxSpace = anchorPosition + new float2(cpuBox[0, 0, 0], cpuBox[0, 0, 1]);
-        var boxTopRightSpace = anchorPosition + new float2(cpuBox[0, 0, 0] + 0.5f * cpuBox[0, 0, 2], cpuBox[0, 0, 1] + 0.5f * cpuBox[0, 0, 3]);
-
-        var x = boxSpace.x - cpuBox[0, 0, 2] * 0.5f;
-        var y = Mathf.Abs((boxSpace.y - cpuBox[0, 0, 3] * 0.5f) - 128);
-
-        Vector4 box = new Vector4(x, y, cpuBox[0, 0, 2], cpuBox[0, 0, 3]);
-        material.SetVector("_Box", box);
-        material.SetTexture("_MainTex", tex);
-
-        Graphics.Blit(tex, croppedRT, material);
-        TextureConverter.ToTensor(croppedRT, attentionMeshInputTensor, transformAM);
-        AttentionMeshWorker.SetInput(0, attentionMeshInputTensor);
-        AttentionMeshWorker.Schedule();
-
-        var LeftIris = AttentionMeshWorker.PeekOutput(2) as Tensor<float>;
-        var RightIris = AttentionMeshWorker.PeekOutput(6) as Tensor<float>;
-
-        var cpuLeftIris = LeftIris.ReadbackAndClone();
-        var cpuRightIris = RightIris.ReadbackAndClone();
-        irisMaterial.SetTexture("_MainTex", croppedRT);
-        irisMaterial.SetFloat("_LeftIrisX", cpuLeftIris[0, 0, 0, 0]);
-        irisMaterial.SetFloat("_LeftIrisY", cpuLeftIris[0, 0, 0, 1]);
-        irisMaterial.SetFloat("_RightIrisX", cpuRightIris[0, 0, 0, 0]);
-        irisMaterial.SetFloat("_RightIrisY", cpuRightIris[0, 0, 0, 1]);
-        IrisImage.texture = croppedRT;
+        for (int i = 0; i < k; i++)
+        {
+            var anchorValues = anchorLines[i].Split(',');
+            for (var j = 0; j < 4; j++)
+                anchors[i, j] = float.Parse(anchorValues[j], CultureInfo.InvariantCulture);
+        }
+        return anchors;
     }
 }

@@ -48,10 +48,11 @@ Shader "Unlit/BBoxCrop"
                 float2 topLeft = (_Box.xy / 128.0);
                 float2 size = _Box.zw / 128.0;
 
-                float offset = _Margin * max(size.x, size.y);
+                float offsetX = _Margin * size.x;
+                float offsetY = _Margin * size.y;
                 float2 bottomLeft = float2(topLeft.x, topLeft.y - size.y);
-                float2 boxMin = bottomLeft + float2(offset / (-2), offset / 2);
-                float2 boxSize = float2(size.x, size.y) + offset;
+                float2 boxMin = bottomLeft + float2(offsetX / (-2), 0);
+                float2 boxSize = float2(size.x, size.y) + float2(offsetX, offsetY);
 
                 float2 uv = boxMin + i.uv * boxSize;
 
