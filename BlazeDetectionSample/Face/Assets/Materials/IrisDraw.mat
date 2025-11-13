@@ -101,15 +101,15 @@ Material:
     - _GlossMapScale: 0
     - _Glossiness: 0
     - _GlossyReflections: 0
-    - _LeftIrisX: 44.638515
-    - _LeftIrisY: 68.695114
+    - _LeftIrisX: 80.12867
+    - _LeftIrisY: 94.114204
     - _Metallic: 0
     - _OcclusionStrength: 1
     - _Parallax: 0.005
     - _QueueOffset: 0
     - _ReceiveShadows: 1
-    - _RightIrisX: 133.35385
-    - _RightIrisY: 68.90121
+    - _RightIrisX: 120.91623
+    - _RightIrisY: 93.61248
     - _Smoothness: 0.5
     - _SmoothnessTextureChannel: 0
     - _SpecularHighlights: 1
